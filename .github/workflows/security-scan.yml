@@ -1,302 +1,79 @@
-# GitHub Actions workflow to trigger AWS security scan via Step Functions
-name: AWS Security Scan Workflow
+name: Security Scan Orchestration
 
-# Trigger on push to main/develop branches or pull requests
 on:
   push:
-    branches: [main, develop, master]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main, master]
-  workflow_dispatch:  # Allow manual triggering
-
-env:
-  AWS_REGION: us-west-2
-  API_GATEWAY_ID: 7c3i81zhtd  # API Gateway ID from CloudFormation deployment
+    branches: [ main ]
 
 jobs:
   trigger-security-scan:
     runs-on: ubuntu-latest
     
     steps:
-      # Checkout code for context
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Full history for better analysis
-
-      # Configure AWS credentials from GitHub secrets
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Prepare comprehensive GitHub payload
-      - name: Prepare Security Scan Payload
-        id: prepare-payload
-        run: |
-          # Create comprehensive payload with GitHub context
-          PAYLOAD=$(cat << EOF
-          {
-            "repository": "${{ github.repository }}",
-            "commit": "${{ github.sha }}",
-            "branch": "${{ github.ref_name }}",
-            "actor": "${{ github.actor }}",
-            "event": "${{ github.event_name }}",
-            "pullRequest": {
-              "number": "${{ github.event.pull_request.number || 'null' }}",
-              "title": "${{ github.event.pull_request.title || 'null' }}",
-              "base_branch": "${{ github.event.pull_request.base.ref || 'null' }}",
-              "head_branch": "${{ github.event.pull_request.head.ref || 'null' }}"
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+        
+    - name: Trigger Security Scan Workflow
+      run: |
+        # Create GitHub payload for Step Functions
+        PAYLOAD=$(cat <<EOF
+        {
+          "repository": {
+            "id": ${{ github.event.repository.id }},
+            "name": "${{ github.event.repository.name }}",
+            "full_name": "${{ github.event.repository.full_name }}",
+            "owner": {
+              "login": "${{ github.event.repository.owner.login }}",
+              "id": ${{ github.event.repository.owner.id }}
             },
-            "workflow": {
-              "run_id": "${{ github.run_id }}",
-              "run_number": "${{ github.run_number }}",
-              "workflow": "${{ github.workflow }}"
+            "html_url": "${{ github.event.repository.html_url }}",
+            "clone_url": "${{ github.event.repository.clone_url }}",
+            "language": "${{ github.event.repository.language }}",
+            "default_branch": "${{ github.event.repository.default_branch }}"
+          },
+          "head_commit": {
+            "id": "${{ github.sha }}",
+            "message": $(echo '${{ github.event.head_commit.message }}' | jq -R .),
+            "timestamp": "${{ github.event.head_commit.timestamp }}",
+            "author": {
+              "name": "${{ github.event.head_commit.author.name }}",
+              "email": "${{ github.event.head_commit.author.email }}"
             },
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "github_context": {
-              "ref": "${{ github.ref }}",
-              "ref_type": "${{ github.ref_type }}",
-              "repository_url": "${{ github.server_url }}/${{ github.repository }}",
-              "commit_url": "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
-            }
+            "added": $(echo '${{ toJson(github.event.head_commit.added) }}'),
+            "modified": $(echo '${{ toJson(github.event.head_commit.modified) }}'),
+            "removed": $(echo '${{ toJson(github.event.head_commit.removed) }}')
+          },
+          "ref": "${{ github.ref }}",
+          "before": "${{ github.event.before }}",
+          "after": "${{ github.event.after }}",
+          "pusher": {
+            "name": "${{ github.event.pusher.name }}",
+            "email": "${{ github.event.pusher.email }}"
+          },
+          "sender": {
+            "login": "${{ github.event.sender.login }}",
+            "id": ${{ github.event.sender.id }}
           }
-          EOF
-          )
-          
-          # Save payload to file for debugging
-          echo "$PAYLOAD" > github-payload.json
-          echo "payload-file=github-payload.json" >> $GITHUB_OUTPUT
-
-      # Validate payload
-      - name: Validate Payload
-        run: |
-          echo "Validating GitHub payload..."
-          cat github-payload.json | jq '.' > /dev/null
-          echo "✅ Payload is valid JSON"
-          
-          # Show payload summary
-          echo "📋 Payload Summary:"
-          echo "Repository: $(cat github-payload.json | jq -r '.repository')"
-          echo "Commit: $(cat github-payload.json | jq -r '.commit')"
-          echo "Branch: $(cat github-payload.json | jq -r '.branch')"
-          echo "Actor: $(cat github-payload.json | jq -r '.actor')"
-          echo "Event: $(cat github-payload.json | jq -r '.event')"
-
-      # Trigger security workflow via API Gateway
-      - name: Trigger Security Workflow via API Gateway
-        id: trigger-workflow
-        run: |
-          echo "🚀 Triggering security workflow..."
-          
-          # Read payload from file
-          PAYLOAD=$(cat github-payload.json)
-          
-          # Call API Gateway endpoint using curl (more reliable than aws apigatewayv2 invoke)
-          echo "📡 Calling API Gateway endpoint..."
-          HTTP_STATUS=$(curl -s -w "%{http_code}" -o response.json \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
-            "https://${{ env.API_GATEWAY_ID }}.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod/trigger")
-          
-          echo "HTTP Status Code: $HTTP_STATUS"
-          
-          # Check if request was successful
-          if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 201 ]; then
-            echo "✅ Security workflow triggered successfully"
-            echo "📄 Response:"
-            cat response.json
-            
-            # Try to extract execution ARN if available
-            if [ -f response.json ]; then
-              EXECUTION_ARN=$(cat response.json | jq -r '.executionArn // empty' 2>/dev/null || echo "")
-              if [ ! -z "$EXECUTION_ARN" ]; then
-                echo "execution-arn=$EXECUTION_ARN" >> $GITHUB_OUTPUT
-                echo "🔗 Step Functions Execution ARN: $EXECUTION_ARN"
-              else
-                echo "ℹ️ No execution ARN found in response"
-              fi
-            fi
-          else
-            echo "❌ Failed to trigger security workflow"
-            echo "HTTP Status Code: $HTTP_STATUS"
-            echo "Response:"
-            cat response.json 2>/dev/null || echo "No response body"
-            exit 1
-          fi
-
-      # Monitor workflow execution (optional)
-      - name: Monitor Workflow Execution
-        if: steps.trigger-workflow.outputs.execution-arn
-        run: |
-          EXECUTION_ARN="${{ steps.trigger-workflow.outputs.execution-arn }}"
-          echo "🔍 Monitoring Step Functions execution: $EXECUTION_ARN"
-          
-          # Wait a bit for execution to start
-          sleep 30
-          
-          # Check execution status
-          aws stepfunctions describe-execution \
-            --execution-arn "$EXECUTION_ARN" \
-            --query '{Status:status,StartDate:startDate,StopDate:stopDate}' \
-            --output table
-          
-          # Get execution history summary
-          echo "📊 Execution Events Summary:"
-          aws stepfunctions get-execution-history \
-            --execution-arn "$EXECUTION_ARN" \
-            --max-items 10 \
-            --query 'events[?type==`TaskStateEntered` || type==`TaskSucceeded` || type==`TaskFailed`].{Type:type,Timestamp:timestamp,Details:stateEnteredEventDetails.name}' \
-            --output table
-
-      # Set commit status based on workflow trigger
-      - name: Update Commit Status
-        if: always()
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            STATUS="success"
-            DESCRIPTION="Security scan triggered successfully"
-          else
-            STATUS="failure"
-            DESCRIPTION="Failed to trigger security scan"
-          fi
-          
-          echo "📝 Setting commit status: $STATUS"
-          echo "Repository: ${{ github.repository }}"
-          echo "Commit: ${{ github.sha }}"
-          echo "Description: $DESCRIPTION"
-          
-          # Note: In production, you would use GitHub API to set commit status
-          # This requires a GitHub token with appropriate permissions
-          # curl -X POST \
-          #   -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          #   -H "Accept: application/vnd.github.v3+json" \
-          #   "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
-          #   -d '{
-          #     "state": "'$STATUS'",
-          #     "description": "'$DESCRIPTION'",
-          #     "context": "synopsys-guard/security-scan"
-          #   }'
-
-      # Upload artifacts for debugging
-      - name: Upload Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-scan-artifacts-${{ github.run_number }}
-          path: |
-            github-payload.json
-            response.json
-          retention-days: 30
-          if-no-files-found: warn
-
-  # Optional: Wait for scan completion (for critical branches)
-  wait-for-scan-completion:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    needs: trigger-security-scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Wait for Scan Completion
-        if: needs.trigger-security-scan.outputs.execution-arn
-        run: |
-          EXECUTION_ARN="${{ needs.trigger-security-scan.outputs.execution-arn }}"
-          echo "⏳ Waiting for security scan completion..."
-          echo "Execution ARN: $EXECUTION_ARN"
-          
-          # Poll execution status
-          MAX_ATTEMPTS=30
-          ATTEMPT=1
-          
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "🔍 Check #$ATTEMPT/$MAX_ATTEMPTS"
-            
-            STATUS=$(aws stepfunctions describe-execution \
-              --execution-arn "$EXECUTION_ARN" \
-              --query 'status' \
-              --output text)
-            
-            echo "Current status: $STATUS"
-            
-            case $STATUS in
-              "SUCCEEDED")
-                echo "✅ Security scan completed successfully!"
-                break
-                ;;
-              "FAILED")
-                echo "❌ Security scan failed!"
-                aws stepfunctions describe-execution \
-                  --execution-arn "$EXECUTION_ARN" \
-                  --query '{Status:status,Error:error,Cause:cause}' \
-                  --output table
-                exit 1
-                ;;
-              "TIMED_OUT")
-                echo "⏰ Security scan timed out!"
-                exit 1
-                ;;
-              "ABORTED")
-                echo "🛑 Security scan was aborted!"
-                exit 1
-                ;;
-              "RUNNING")
-                echo "🔄 Security scan is still running..."
-                sleep 60
-                ;;
-              *)
-                echo "❓ Unknown status: $STATUS"
-                sleep 30
-                ;;
-            esac
-            
-            ATTEMPT=$((ATTEMPT + 1))
-          done
-          
-          if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
-            echo "⏰ Timeout waiting for scan completion"
-            exit 1
-          fi
-
-      - name: Get Scan Results Summary
-        if: needs.trigger-security-scan.outputs.execution-arn
-        run: |
-          EXECUTION_ARN="${{ needs.trigger-security-scan.outputs.execution-arn }}"
-          
-          echo "📊 Security Scan Results Summary"
-          echo "=================================="
-          
-          # Get execution output
-          aws stepfunctions describe-execution \
-            --execution-arn "$EXECUTION_ARN" \
-            --query 'output' \
-            --output text | jq -r '.' > scan-results.json || echo "No output available"
-          
-          if [ -f scan-results.json ]; then
-            echo "✅ Scan completed successfully"
-            cat scan-results.json | jq -r '.'
-          else
-            echo "ℹ️ No detailed results available"
-          fi
-
-# TODO: Setup Instructions
-# 1. Deploy the CloudFormation template using DEPLOYMENT_PROCEDURE.md
-# 2. Get the API Gateway ID from CloudFormation outputs
-# 3. Replace YOUR_API_GATEWAY_ID in this file with the actual API Gateway ID
-# 4. Add GitHub repository secrets:
-#    - AWS_ACCESS_KEY_ID: From CloudFormation output
-#    - AWS_SECRET_ACCESS_KEY: From CloudFormation output
-# 5. Commit this file to .github/workflows/ directory in your repository
-# 6. Push to main branch to trigger the first security scan
+        }
+        EOF
+        )
+        
+        # Execute Step Functions state machine
+        EXECUTION_NAME="github-${{ github.run_id }}-${{ github.run_attempt }}"
+        
+        aws stepfunctions start-execution \
+          --state-machine-arn "arn:aws:states:us-west-2:047786098634:stateMachine:security-scan-orchestration-dev" \
+          --name "$EXECUTION_NAME" \
+          --input "$PAYLOAD"
+        
+        echo "🚀 Security scan triggered successfully!"
+        echo "Execution name: $EXECUTION_NAME"
+        echo "Monitor progress: https://us-west-2.console.aws.amazon.com/states/home?region=us-west-2"
