@@ -1,0 +1,11 @@
+{
+  "level": "ALL",
+  "includeExecutionData": true,
+  "destinations": [
+    {
+      "cloudWatchLogsLogGroup": {
+        "logGroupArn": "arn:aws:logs:us-west-2:047786098634:log-group:/aws/stepfunctions/security-scan-orchestration-dev"
+      }
+    }
+  ]
+}

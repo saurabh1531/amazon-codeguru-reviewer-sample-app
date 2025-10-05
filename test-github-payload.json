@@ -1,0 +1,38 @@
+{
+  "repository": {
+    "id": 123456789,
+    "name": "amazon-codeguru-reviewer-sample-app",
+    "full_name": "saurabh1531/amazon-codeguru-reviewer-sample-app",
+    "owner": {
+      "login": "saurabh1531",
+      "id": 12345
+    },
+    "html_url": "https://github.com/saurabh1531/amazon-codeguru-reviewer-sample-app",
+    "clone_url": "https://github.com/saurabh1531/amazon-codeguru-reviewer-sample-app.git",
+    "language": "Java",
+    "default_branch": "master"
+  },
+  "head_commit": {
+    "id": "bcf0d21",
+    "message": "Add security scan test file to trigger workflow",
+    "timestamp": "2025-10-06T02:13:00Z",
+    "author": {
+      "name": "saurabh1531",
+      "email": "saurabh.kuradkar@accenture.com"
+    },
+    "added": ["security-test.txt"],
+    "modified": [],
+    "removed": []
+  },
+  "ref": "refs/heads/master",
+  "before": "854f960",
+  "after": "bcf0d21",
+  "pusher": {
+    "name": "saurabh1531",
+    "email": "saurabh.kuradkar@accenture.com"
+  },
+  "sender": {
+    "login": "saurabh1531",
+    "id": 12345
+  }
+}
