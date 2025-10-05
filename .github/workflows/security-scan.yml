@@ -11,7 +11,7 @@ on:
 
 env:
   AWS_REGION: us-west-2
-  API_GATEWAY_ID: knec5fyhm2  # API Gateway ID from CloudFormation deployment
+  API_GATEWAY_ID: 7c3i81zhtd  # API Gateway ID from CloudFormation deployment
 
 jobs:
   trigger-security-scan:
