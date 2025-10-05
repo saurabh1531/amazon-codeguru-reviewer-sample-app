@@ -95,30 +95,37 @@ jobs:
           # Read payload from file
           PAYLOAD=$(cat github-payload.json)
           
-          # Call API Gateway endpoint
-          RESPONSE=$(aws apigatewayv2 invoke \
-            --api-id ${{ env.API_GATEWAY_ID }} \
-            --stage prod \
-            --route-key "POST /trigger" \
-            --body "$PAYLOAD" \
-            --cli-binary-format raw-in-base64-out \
-            response.json 2>&1)
+          # Call API Gateway endpoint using curl (more reliable than aws apigatewayv2 invoke)
+          echo "📡 Calling API Gateway endpoint..."
+          HTTP_STATUS=$(curl -s -w "%{http_code}" -o response.json \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://${{ env.API_GATEWAY_ID }}.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod/trigger")
           
-          # Check if command was successful
-          if [ $? -eq 0 ]; then
+          echo "HTTP Status Code: $HTTP_STATUS"
+          
+          # Check if request was successful
+          if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 201 ]; then
             echo "✅ Security workflow triggered successfully"
             echo "📄 Response:"
-            cat response.json | jq '.'
+            cat response.json
             
-            # Extract execution ARN if available
-            EXECUTION_ARN=$(cat response.json | jq -r '.executionArn // empty')
-            if [ ! -z "$EXECUTION_ARN" ]; then
-              echo "execution-arn=$EXECUTION_ARN" >> $GITHUB_OUTPUT
-              echo "🔗 Step Functions Execution ARN: $EXECUTION_ARN"
+            # Try to extract execution ARN if available
+            if [ -f response.json ]; then
+              EXECUTION_ARN=$(cat response.json | jq -r '.executionArn // empty' 2>/dev/null || echo "")
+              if [ ! -z "$EXECUTION_ARN" ]; then
+                echo "execution-arn=$EXECUTION_ARN" >> $GITHUB_OUTPUT
+                echo "🔗 Step Functions Execution ARN: $EXECUTION_ARN"
+              else
+                echo "ℹ️ No execution ARN found in response"
+              fi
             fi
           else
             echo "❌ Failed to trigger security workflow"
-            echo "Error: $RESPONSE"
+            echo "HTTP Status Code: $HTTP_STATUS"
+            echo "Response:"
+            cat response.json 2>/dev/null || echo "No response body"
             exit 1
           fi
 
